@@ -23,8 +23,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--miner-id",
         help="Storage Provider miner ID (ie. f0123456)",
+        type=str,
         default=os.environ.get("MINER_ID"),
         required=not os.environ.get("MINER_ID"),
+    )
+    parser.add_argument(
+        "--fil-spid-file-path",
+        help="Full file path of the `fil-spid.bash` authorization script provided by Spade.",
+        type=str,
+        default=os.environ.get("FIL_SPID_FILE_PATH"),
+        required=not os.environ.get("FIL_SPID_FILE_PATH"),
     )
     parser.add_argument(
         "--aria2c-url",
@@ -157,7 +165,7 @@ PENDING_PROPOSALS_ENDPOINT = "https://api.spade.storage/sp/pending_proposals"
 )
 def eligible_pieces(*, options: dict) -> dict:
     log.debug("Querying for eligible pieces")
-    headers = {"Authorization": shell(command=["bash", "fil-spid.bash", options.miner_id])}
+    headers = {"Authorization": shell(command=["bash", options.fil_spid_file_path, options.miner_id])}
     response = requests.get(ELIGIBLE_PIECES_ENDPOINT, timeout=30, headers=headers, allow_redirects=True)
     try:
         response.raise_for_status()
@@ -173,7 +181,7 @@ def eligible_pieces(*, options: dict) -> dict:
 def invoke_deal(*, piece_cid: str, tenant_policy_cid: str, options: dict) -> dict:
     log.debug("Invoking a new deal")
     stdin = f"call=reserve_piece&piece_cid={piece_cid}&tenant_policy={tenant_policy_cid}"
-    auth_token = shell(command=["bash", "fil-spid.bash", options.miner_id], stdin=stdin)
+    auth_token = shell(command=["bash", options.fil_spid_file_path, options.miner_id], stdin=stdin)
 
     headers = {"Authorization": auth_token}
     response = requests.post(INVOKE_ENDPOINT, timeout=30, headers=headers, allow_redirects=True)
@@ -192,7 +200,7 @@ def invoke_deal(*, piece_cid: str, tenant_policy_cid: str, options: dict) -> dic
     wait=tenacity.wait_exponential(min=1, max=15, multiplier=2), after=tenacity.after.after_log(log_retry, logging.INFO)
 )
 def pending_proposals(*, options: dict) -> list:
-    headers = {"Authorization": shell(command=["bash", "fil-spid.bash", options.miner_id])}
+    headers = {"Authorization": shell(command=["bash", options.fil_spid_file_path, options.miner_id])}
     response = requests.get(PENDING_PROPOSALS_ENDPOINT, timeout=30, headers=headers, allow_redirects=True)
 
     try:
@@ -384,8 +392,21 @@ def populate_startup_state(*, options: dict) -> dict:
     return state
 
 
+def statup_checks(*, options: dict) -> None:
+    # Ensure the file-spid.bash script exists
+    if not os.path.exists(options.fil_spid_file_path):
+        log.error(f"Authorization script does not exist: {options.fil_spid_file_path}")
+        os._exit(1)
+
+    # Ensure the download directory exists
+    if not os.path.exists(options.aria2c_download_path):
+        log.error(f"Aria2c download directory does not exist: {options.aria2c_download_path}")
+        os._exit(1)
+
+
 def main() -> None:
     global options
+    statup_checks(options=options)
     log.info("Connecting to Aria2c...")
     setup_aria2p(options=options)
     log.info("Starting Ace of Spades...")

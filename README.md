@@ -13,6 +13,8 @@ To install dependencies:
 pip3 install -r requirements.txt
 ```
 
+You will also need a copy of `fil-spid.bash`. Refer to the Spade slack channel and repo for a copy of this.
+
 ## Usage
 
 As stated above, it is the operator's responsibilty to run two components: Aria2c and _Ace of Spades_. Aria2c manages all downloads while _Ace_ manages the flow 
@@ -31,6 +33,7 @@ Example usage:
 ```
 python3 ace_of_spades.py \
     --miner-id f0123456789 \
+    --fil-spid-file-path /path/to/fil-spid.bash \
     --aria2c-download-path /mnt/localssd/incoming/
 ```
 
@@ -38,15 +41,14 @@ A token to talk to boost is also required, and can either be specified on the co
 
 All parameters to _Ace_ can be specified either via command line flag or environment variable. See `--help` for both CLI flag names and env var names.
 ```
-usage: ace_of_spades.py [-h] --miner-id MINER_ID [--aria2c-url [ARIA2C_URL]] [--aria2c-connections-per-server [ARIA2C_CONNECTIONS_PER_SERVER]]
-                        [--aria2c-max-concurrent-downloads [ARIA2C_MAX_CONCURRENT_DOWNLOADS]] [--aria2c-download-path [ARIA2C_DOWNLOAD_PATH]] --boost-api-info BOOST_API_INFO
-                        --boost-graphql-port [BOOST_GRAPHQL_PORT] [--boost-delete-after-import [BOOST_DELETE_AFTER_IMPORT]]
-                        [--maximum-boost-deals-in-flight [MAXIMUM_BOOST_DEALS_IN_FLIGHT]] [--verbose [VERBOSE]] [--debug [DEBUG]]
-                        [--complete-existing-deals-only [COMPLETE_EXISTING_DEALS_ONLY]]
+usage: ace_of_spades.py [-h] --miner-id MINER_ID --fil-spid-file-path FIL_SPID_FILE_PATH [--aria2c-url [ARIA2C_URL]] [--aria2c-connections-per-server [ARIA2C_CONNECTIONS_PER_SERVER]] [--aria2c-max-concurrent-downloads [ARIA2C_MAX_CONCURRENT_DOWNLOADS]] [--aria2c-download-path [ARIA2C_DOWNLOAD_PATH]]
+                        [--boost-api-info BOOST_API_INFO] --boost-graphql-port [BOOST_GRAPHQL_PORT] [--boost-delete-after-import [BOOST_DELETE_AFTER_IMPORT]] [--maximum-boost-deals-in-flight [MAXIMUM_BOOST_DEALS_IN_FLIGHT]] [--verbose [VERBOSE]] [--debug [DEBUG]] [--complete-existing-deals-only [COMPLETE_EXISTING_DEALS_ONLY]]
 
-optional arguments:
+options:
   -h, --help            show this help message and exit
   --miner-id MINER_ID   Storage Provider miner ID (ie. f0123456)
+  --fil-spid-file-path FIL_SPID_FILE_PATH
+                        Full file path of the `fil-spid.bash` authorization script provided by Spade.
   --aria2c-url [ARIA2C_URL]
                         URL of the aria2c process running in daemon mode (eg. 'http://localhost:6800'). Launch the daemon with `aria2c --enable-rpc`.
   --aria2c-connections-per-server [ARIA2C_CONNECTIONS_PER_SERVER]
@@ -66,8 +68,7 @@ optional arguments:
   --verbose [VERBOSE]   If enabled, logging will be greatly increased. Default: False
   --debug [DEBUG]       If enabled, logging will be thorough, enabling debugging of deep issues. Default: False
   --complete-existing-deals-only [COMPLETE_EXISTING_DEALS_ONLY]
-                        Setting this flag will prevent new deals from being requested but allow existing deals to complete. Useful for cleaning out the deals pipeline to debug,
-                        or otherwise. Default: False
+                        Setting this flag will prevent new deals from being requested but allow existing deals to complete. Useful for cleaning out the deals pipeline to debug, or otherwise. Default: False
 ```
 
 ### Support
