@@ -512,8 +512,6 @@ def main() -> None:
 
         time.sleep(15)
 
-    # rate limit based on number of RU/PR2 jobs currently running
-
 
 if __name__ == "__main__":
     main()
