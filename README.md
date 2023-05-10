@@ -15,6 +15,17 @@ pip3 install -r requirements.txt
 
 ## Usage
 
+As stated above, it is the operator's responsibilty to run two components: Aria2c and _Ace of Spades_. Aria2c manages all downloads while _Ace_ manages the flow 
+
+### Aria2c
+
+To run this, install [aria2c](https://aria2.github.io/) and start it with the JSON-RPC server:
+```
+aria2c --enable-rpc
+```
+
+### Starting Ace
+
 Example usage:
 
 ```
