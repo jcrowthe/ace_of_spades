@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tenacity
 import time
+import urllib3
 
 from typing import Any, Dict, Optional
 
@@ -96,12 +97,30 @@ def parse_args() -> argparse.Namespace:
         required=False,
     )
     parser.add_argument(
+        "--spade-deal-timeout",
+        help="The time to wait between a deal appearing in Boost and appearing in Spade before considering the deal failed (or not a Spade deal) and ignoring it. Stated in seconds, with no units. Default: 3600",
+        nargs="?",
+        const=True,
+        type=int,
+        default=os.environ.get("SPADE_DEAL_TIMEOUT", 3600),
+        required=False,
+    )
+    parser.add_argument(
         "--maximum-boost-deals-in-flight",
         help="The maximum number of deals in 'Awaiting Offline Data Import' state in Boost UI. Default: 10",
         nargs="?",
         const=10,
         type=int,
         default=os.environ.get("MAXIMUM_BOOST_DEALS_IN_FLIGHT", 10),
+        required=False,
+    )
+    parser.add_argument(
+        "--complete-existing-deals-only",
+        help="Setting this flag will prevent new deals from being requested but allow existing deals to complete. Useful for cleaning out the deals pipeline to debug, or otherwise. Default: False",
+        nargs="?",
+        const=False,
+        type=bool,
+        default=os.environ.get("COMPLETE_EXISTING_DEALS_ONLY", False),
         required=False,
     )
     parser.add_argument(
@@ -120,15 +139,6 @@ def parse_args() -> argparse.Namespace:
         const=False,
         type=bool,
         default=os.environ.get("DEBUG", False),
-        required=False,
-    )
-    parser.add_argument(
-        "--complete-existing-deals-only",
-        help="Setting this flag will prevent new deals from being requested but allow existing deals to complete. Useful for cleaning out the deals pipeline to debug, or otherwise. Default: False",
-        nargs="?",
-        const=False,
-        type=bool,
-        default=os.environ.get("COMPLETE_EXISTING_DEALS_ONLY", False),
         required=False,
     )
     return parser.parse_args()
@@ -154,63 +164,59 @@ log = get_logger("Ace", options=options)
 log_retry = get_logger("RETRYING", options=options)
 log_aria2 = get_logger("Aria2", options=options)
 log_boost = get_logger("Boost", options=options)
+log_request = get_logger("Request", options=options)
 
 ELIGIBLE_PIECES_ENDPOINT = "https://api.spade.storage/sp/eligible_pieces"
 INVOKE_ENDPOINT = "https://api.spade.storage/sp/invoke"
 PENDING_PROPOSALS_ENDPOINT = "https://api.spade.storage/sp/pending_proposals"
 
 
-@tenacity.retry(
-    wait=tenacity.wait_exponential(min=1, max=15, multiplier=2), after=tenacity.after.after_log(log_retry, logging.INFO)
-)
 def eligible_pieces(*, options: dict) -> dict:
     log.debug("Querying for eligible pieces")
     headers = {"Authorization": shell(command=["bash", options.fil_spid_file_path, options.miner_id])}
-    response = requests.get(ELIGIBLE_PIECES_ENDPOINT, timeout=30, headers=headers, allow_redirects=True)
-    try:
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.HTTPError:
-        log.error(f"Failed to get eligible_pieces. {response.text}")
-        raise Exception(f"Failed to get eligible_pieces. {response.text}, {response.status_code}, {response.headers}")
+    response = request_handler(
+        url=ELIGIBLE_PIECES_ENDPOINT,
+        method="get",
+        parameters={"timeout": 30, "headers": headers, "allow_redirects": True},
+    )
+    if response == None:
+        return None
+    return response
 
 
-@tenacity.retry(
-    wait=tenacity.wait_exponential(min=1, max=3, multiplier=2), after=tenacity.after.after_log(log_retry, logging.INFO)
-)
 def invoke_deal(*, piece_cid: str, tenant_policy_cid: str, options: dict) -> dict:
     log.debug("Invoking a new deal")
     stdin = f"call=reserve_piece&piece_cid={piece_cid}&tenant_policy={tenant_policy_cid}"
     auth_token = shell(command=["bash", options.fil_spid_file_path, options.miner_id], stdin=stdin)
 
     headers = {"Authorization": auth_token}
-    response = requests.post(INVOKE_ENDPOINT, timeout=30, headers=headers, allow_redirects=True)
-    try:
-        response.raise_for_status()
-        res = response.json()
-        res["piece_cid"] = re.findall(r"baga[a-zA-Z0-9]+", res["info_lines"][0])[0]
-        log.debug(f"New deal requested: {res}")
-        return res
-    except requests.exceptions.HTTPError:
-        log.error(f"Failed to invoke deal. {response.text}")
-        raise Exception(f"Failed to invoke deal. {response.text}, {response.status_code}, {response.headers}")
+    response = request_handler(
+        url=INVOKE_ENDPOINT, method="post", parameters={"timeout": 30, "headers": headers, "allow_redirects": True}
+    )
+
+    if response == None:
+        return None
+    if response["response_code"] == 403:
+        return {
+            "invocation_failure_slug": "ErrTooManyReplicas",
+            "invocation_failure_message": "".join(response["error_lines"]),
+        }
+
+    response["piece_cid"] = re.findall(r"baga[a-zA-Z0-9]+", response["info_lines"][0])[0]
+    log.debug(f"New deal requested: {response}")
+    return response
 
 
-@tenacity.retry(
-    wait=tenacity.wait_exponential(min=1, max=15, multiplier=2), after=tenacity.after.after_log(log_retry, logging.INFO)
-)
 def pending_proposals(*, options: dict) -> list:
     headers = {"Authorization": shell(command=["bash", options.fil_spid_file_path, options.miner_id])}
-    response = requests.get(PENDING_PROPOSALS_ENDPOINT, timeout=30, headers=headers, allow_redirects=True)
-
-    try:
-        response.raise_for_status()
-        return response.json()["response"]["pending_proposals"]
-    except requests.exceptions.HTTPError:
-        log.error(f"Failed to get pending proposals. {response.text}")
-        raise Exception(
-            f"Querying pending_proposals resulted in an HTTPError. {response.text}, {response.status_code}, {response.headers}"
-        )
+    response = request_handler(
+        url=PENDING_PROPOSALS_ENDPOINT,
+        method="get",
+        parameters={"timeout": 30, "headers": headers, "allow_redirects": True},
+    )
+    if response == None:
+        return None
+    return response["response"]
 
 
 def boost_import(*, options: dict, deal_uuid: str, file_path: str) -> bool:
@@ -232,21 +238,23 @@ def boost_import(*, options: dict, deal_uuid: str, file_path: str) -> bool:
         "id": json_rpc_id,
     }
 
-    response = requests.post(f"http://{boost_url}:{boost_port}/rpc/v0", data=json.dumps(payload), headers=headers)
+    response = request_handler(
+        url=f"http://{boost_url}:{boost_port}/rpc/v0",
+        method="post",
+        parameters={"timeout": 30, "data": json.dumps(payload), "headers": headers},
+    )
     json_rpc_id += 1
-    try:
-        response.raise_for_status()
-    except requests.exceptions.HTTPError:
-        log_boost.error("Error talking to Boost")
-        raise Exception("Error talking to Boost")
-
-    if response.json()["result"]["Accepted"]:
-        log.debug(f"Deal imported to boost: {response.json()}")
+    if response == None:
+        return None
+    elif "error" in response:
+        log.warning(f"Import to boost failed with error: {response['error']}")
+        return None
+    elif "result" in response and response["result"]["Accepted"]:
         log.info(f"Deal imported to boost: {deal_uuid}")
         return True
     else:
-        log.error(f"Deal failed to be imported to boost: {response.json()}")
-        return False
+        log.error(f"Deal failed to be imported to boost: {response}")
+        return None
 
 
 def get_boost_deals(*, options: dict) -> Any:
@@ -257,15 +265,71 @@ def get_boost_deals(*, options: dict) -> Any:
         "query": "query {deals(limit: 1000, filter: {IsOffline: true, Checkpoint: Accepted}) {deals {ID CreatedAt Checkpoint IsOffline Err PieceCid Message}totalCount}}"
     }
 
-    response = requests.post(f"http://{boost_url}:{options.boost_graphql_port}/graphql/query", data=json.dumps(payload))
-    try:
-        response.raise_for_status()
-        log.debug(f'Deal data from boost: {response.json()["data"]["deals"]}')
-        deals = response.json()["data"]["deals"]["deals"]
+    response = request_handler(
+        url=f"http://{boost_url}:{options.boost_graphql_port}/graphql/query",
+        method="post",
+        parameters={"timeout": 30, "data": json.dumps(payload)},
+    )
+    if response == None:
+        return None
+    else:
+        deals = response["data"]["deals"]["deals"]
         return [d for d in deals if d["Message"] == "Awaiting Offline Data Import"]
-    except requests.exceptions.HTTPError:
-        log_boost.error("Error talking to Boost")
-        raise Exception("Error talking to Boost")
+
+
+def request_handler(*, url: str, method: str, parameters: dict) -> bool:
+    try:
+        return make_request(url=url, method=method, parameters=parameters)
+    except tenacity.RetryError as e:
+        log.error("Retries failed. Moving on.")
+        return None
+
+
+@tenacity.retry(
+    wait=tenacity.wait_exponential(min=1, max=6, multiplier=2),
+    after=tenacity.after.after_log(log_retry, logging.INFO),
+)
+def make_request(*, url: str, method: str, parameters: dict) -> Any:
+    try:
+        if method == "post":
+            response = requests.post(url, **parameters)
+        if method == "get":
+            response = requests.get(url, **parameters)
+
+        res = response.json()
+        # Disable logging of noisy responses
+        if url != ELIGIBLE_PIECES_ENDPOINT:
+            log_request.debug(f"Response: {res}")
+    except requests.exceptions.HTTPError as e:
+        log_request.error(f"HTTPError: {e}")
+        raise Exception(f"HTTPError: {e}")
+    except requests.exceptions.ConnectionError as e:
+        log_request.error(f"ConnectionError: {e}")
+        raise Exception(f"ConnectionError: {e}")
+    except (TimeoutError, urllib3.exceptions.ReadTimeoutError, requests.exceptions.ReadTimeout) as e:
+        log_request.error(f"Timeout: {e}")
+        raise Exception(f"Timeout: {e}")
+    except:
+        log_request.error(f"Timeout: {e}")
+        raise Exception(f"Timeout: {e}")
+
+    if response.status_code == 401:
+        if "error_lines" in res and "in the future" in "".join(res["error_lines"]):
+            log_request.info(
+                f'Known issue in Spade: the auth token generated by fil-spid.bash is "in the future" according to Spade. Retrying.'
+            )
+            raise Exception("Auth token is in the future.")
+        else:
+            log_request.error(f"401 Unauthorized: {res}")
+            raise Exception(f"401 Unauthorized: {res}")
+    if response.status_code == 403:
+        if "error_slug" in res and res["error_slug"] == "ErrTooManyReplicas":
+            return response
+        else:
+            log_request.error(f"403 Forbidden: {res}")
+            raise Exception(f"403 Forbidden: {res}")
+
+    return res
 
 
 def shell(*, command: list, stdin: Optional[str] = None) -> str:
@@ -282,10 +346,19 @@ def shell(*, command: list, stdin: Optional[str] = None) -> str:
     return process.stdout.rstrip()
 
 
-@tenacity.retry(
-    wait=tenacity.wait_exponential(min=1, max=3, multiplier=2), after=tenacity.after.after_log(log_retry, logging.WARN)
-)
 def download(*, options: dict, source: str) -> bool:
+    try:
+        return download_files(options=options, source=source)
+    except tenacity.RetryError as e:
+        log.error("Retries failed. Moving on.")
+        return None
+
+
+@tenacity.retry(
+    wait=tenacity.wait_exponential(min=1, max=6, multiplier=2),
+    after=tenacity.after.after_log(log_retry, logging.WARN),
+)
+def download_files(*, options: dict, source: str) -> bool:
     if not source.startswith("http"):
         log_aria2.error(f"Error. Unknown file source: {source}")
         # ToDo handle this
@@ -309,16 +382,32 @@ def download(*, options: dict, source: str) -> bool:
     return True
 
 
-@tenacity.retry(
-    wait=tenacity.wait_exponential(min=1, max=15, multiplier=2), after=tenacity.after.after_log(log_retry, logging.WARN)
-)
 def get_downloads() -> dict:
+    try:
+        return get_aria_downloads()
+    except tenacity.RetryError as e:
+        log.error("Retries failed. Moving on.")
+        return None
+
+
+@tenacity.retry(
+    wait=tenacity.wait_exponential(min=1, max=6, multiplier=2),
+    after=tenacity.after.after_log(log_retry, logging.WARN),
+)
+def get_aria_downloads() -> dict:
     return aria2.get_downloads()
 
 
 def download_error(e, i):
-    log.error(f"Download error: {e}, {i}")
-    breakpoint()
+    try:
+        downloads = e.get_downloads()
+        for down in downloads:
+            if down.gid == i:
+                log.info(f"Retrying download due to error: {down.error_message}")
+                response = e.retry_downloads([down], False)
+                log.debug(f"Retry status: {response}")
+    except:
+        log.error(f"Failed to retry download of {i}")
 
 
 def is_download_in_progress(*, url: str, downloads: list) -> bool:
@@ -334,6 +423,8 @@ def request_deal(*, options: dict) -> Any:
     log.info("Requesting a new deal from Spade")
     # Select a deal
     pieces = eligible_pieces(options=options)
+    if pieces == None:
+        return None
     if len(pieces["response"]) < 1:
         log.error("Error. No deal pieces returned.")
 
@@ -343,8 +434,7 @@ def request_deal(*, options: dict) -> Any:
     log.debug(f"Deal selected: {deal}")
 
     # Create a reservation
-    reservation = invoke_deal(piece_cid=deal["piece_cid"], tenant_policy_cid=deal["tenant_policy_cid"], options=options)
-    return reservation
+    return invoke_deal(piece_cid=deal["piece_cid"], tenant_policy_cid=deal["tenant_policy_cid"], options=options)
 
 
 def setup_aria2p(*, options: dict) -> Any:
@@ -383,16 +473,20 @@ def populate_startup_state(*, options: dict) -> dict:
     # Read in deals from Boost. This is the only source necessary on startup as
     # the main control loop will detect and update deal status dynamically.
     deals = get_boost_deals(options=options)
+    if deals == None:
+        os._exit(1)
     for d in deals:
         state[d["PieceCid"]] = {
             "deal_uuid": d["ID"],
             "files": {},
+            "timestamp_in_boost": time.time(),
             "status": "available_in_boost",
         }
+    log.info(f"Found {len(deals)} deals in Boost")
     return state
 
 
-def statup_checks(*, options: dict) -> None:
+def startup_checks(*, options: dict) -> None:
     # Ensure the file-spid.bash script exists
     if not os.path.exists(options.fil_spid_file_path):
         log.error(f"Authorization script does not exist: {options.fil_spid_file_path}")
@@ -406,11 +500,12 @@ def statup_checks(*, options: dict) -> None:
 
 def main() -> None:
     global options
-    statup_checks(options=options)
+    startup_checks(options=options)
     log.info("Connecting to Aria2c...")
     setup_aria2p(options=options)
     log.info("Starting Ace of Spades...")
 
+    deals_in_error_state = []
     state = populate_startup_state(options=options)
     # Example: state = {
     #     '<piece_cid>': {
@@ -419,6 +514,7 @@ def main() -> None:
     #             'http://foo': 'incomplete',  # can be one of ['incomplete', '<file_path>']
     #             'http://foo2': 'incomplete',  # can be one of ['incomplete', '<file_path>']
     #         },
+    #         'timestamp_in_boost': '1234567890',  # The timestamp at which Ace detected the deal in Boost. Used for weeding out an edge case of stale deals.
     #         'status': 'invoked'  #can be one of ['invoked','available_in_boost','downloading','downloaded']
     #     }
     # }
@@ -435,75 +531,115 @@ def main() -> None:
             if len(state) < options.maximum_boost_deals_in_flight:
                 for i in range(len(state), options.maximum_boost_deals_in_flight):
                     new_deal = request_deal(options=options)
-                    log.debug(f'adding {new_deal["piece_cid"]} to state')
-                    state[new_deal["piece_cid"]] = {
-                        "deal_uuid": "unknown",
-                        "files": {},
-                        "status": "invoked",
-                    }
-                    log.info(f'New deal found in Boost: {new_deal["piece_cid"]}')
+                    if new_deal != None:
+                        if "invocation_failure_slug" in new_deal:
+                            log.warning(
+                                f'Invoke failed due to Spade error. Slug: {new_deal["invocation_failure_slug"]}. Error: {new_deal["invocation_failure_message"]}'
+                            )
+                        else:
+                            if new_deal["piece_cid"] not in deals_in_error_state:
+                                log.debug(f'adding {new_deal["piece_cid"]} to state')
+                                state[new_deal["piece_cid"]] = {
+                                    "deal_uuid": "unknown",
+                                    "files": {},
+                                    "timestamp_in_boost": time.time(),
+                                    "status": "invoked",
+                                }
+                                log.info(f'New deal found in Boost: {new_deal["piece_cid"]}')
 
         log.debug(f"request state: {json.dumps(state, indent=4)}")
 
         # Identify when deals are submitted to Boost
         deals = get_boost_deals(options=options)
-        log.debug(f"Deals: {deals}")
-        for d in deals:
-            if d["PieceCid"] not in state:
-                # Fallback necessary during certain Ace restart scenarios
-                state[d["PieceCid"]] = {
-                    "deal_uuid": d["ID"],
-                    "files": {},
-                    "status": "available_in_boost",
-                }
-            if state[d["PieceCid"]]["status"] == "invoked":
-                state[d["PieceCid"]]["status"] = "available_in_boost"
+        if deals != None:
+            log.debug(f"Deals: {deals}")
+            for d in deals:
+                if d["PieceCid"] not in deals_in_error_state:
+                    if d["PieceCid"] not in state:
+                        # Fallback necessary during certain Ace restart scenarios
+                        state[d["PieceCid"]] = {
+                            "deal_uuid": d["ID"],
+                            "files": {},
+                            "timestamp_in_boost": time.time(),
+                            "status": "available_in_boost",
+                        }
+                    if state[d["PieceCid"]]["status"] == "invoked":
+                        state[d["PieceCid"]]["status"] = "available_in_boost"
+                        state[d["PieceCid"]]["timestamp_in_boost"] = time.time()
 
         log.debug(f"identify state: {json.dumps(state, indent=4)}")
 
-        # Start downloading deal files
+        # Edge case. If a deal shows up in Boost, but does not appear in Spade for more than 1 hour (3600 seconds),
+        # consider the deal to be failed and remove it from consideration. Without this check, this failure scenario can
+        # prevent Ace from maintaining its maximum_boost_deals_in_flight.
+        for s in list(state):
+            if state[s]["status"] == "available_in_boost":
+                if state[s]["timestamp_in_boost"] < (time.time() - options.spade_deal_timeout):
+                    log.warning(
+                        f"Deal can be seen in Boost, but has not appeared in Spade for more than {options.spade_deal_timeout} seconds. Considering the deal to be either failed or not a Spade deal: {s}"
+                    )
+                    del state[s]
+                    deals_in_error_state.append(s)
+
         proposals = pending_proposals(options=options)
         downloads = get_downloads()
         log.debug(f"Proposals: {proposals}")
-        for p in proposals:
-            if p["piece_cid"] in state:
-                if state[p["piece_cid"]]["status"] == "available_in_boost":
-                    state[p["piece_cid"]]["deal_uuid"] = p["deal_proposal_id"]
 
-                    # Start download of all files in deal
-                    running = 0
-                    for source in p["data_sources"]:
-                        # Notice and ingest preexisting downloads, whether by a previous Ace process or manual human intervention
-                        if is_download_in_progress(url=source, downloads=downloads):
-                            state[p["piece_cid"]]["files"][source] = "incomplete"
-                            running += 1
-                        else:
-                            if download(source=source, options=options):
-                                running += 1
+        # Handle Spade errors in creating deals
+        log.debug(f"deals_in_error_state: {deals_in_error_state}")
+        if proposals != None:
+            if "recent_failures" in proposals:
+                for p in proposals["recent_failures"]:
+                    if p["piece_cid"] in state:
+                        log.warning(
+                            f'Spade encountered an error with {p["piece_cid"]}: `{p["error"]}`. Ignoring deal and moving on.'
+                        )
+                        del state[p["piece_cid"]]
+                        deals_in_error_state.append(p["piece_cid"])
+
+        # Start downloading deal files
+        if proposals != None and downloads != None:
+            for p in proposals["pending_proposals"]:
+                if p["piece_cid"] in state:
+                    if state[p["piece_cid"]]["status"] == "available_in_boost":
+                        state[p["piece_cid"]]["deal_uuid"] = p["deal_proposal_id"]
+
+                        # Start download of all files in deal
+                        running = 0
+                        for source in p["data_sources"]:
+                            # Notice and ingest preexisting downloads, whether by a previous Ace process or manual human intervention
+                            if is_download_in_progress(url=source, downloads=downloads):
                                 state[p["piece_cid"]]["files"][source] = "incomplete"
+                                running += 1
                             else:
-                                log.error(f"Failed to start download of URL: {source}")
-                    if running == len(p["data_sources"]):
-                        state[p["piece_cid"]]["status"] = "downloading"
+                                if download(source=source, options=options):
+                                    running += 1
+                                    state[p["piece_cid"]]["files"][source] = "incomplete"
+                                else:
+                                    log.error(f"Failed to start download of URL: {source}")
+                        if running == len(p["data_sources"]):
+                            state[p["piece_cid"]]["status"] = "downloading"
 
         log.debug(f"download state: {json.dumps(state, indent=4)}")
 
         # Check for completed downloads
-        for down in get_downloads():
-            if down.is_complete == True:
-                for s in state.keys():
-                    # Ensure files have been populated before proceeding
-                    if bool(state[s]["files"]):
-                        for source in state[s]["files"].keys():
-                            # If the completed downloads's source matches this deal, change 'incomplete' to the file path
-                            if source == down.files[0].uris[0]["uri"]:
-                                state[s]["files"][source] = str(down.files[0].path)
-                                break
-                        if all([v != "incomplete" for v in state[s]["files"].values()]):
-                            state[s]["status"] = "downloaded"
-                            log.info(f"Download complete: {s}")
-                # Cleanup download from Aria2c
-                down.purge()
+        downloads = get_downloads()
+        if downloads != None:
+            for down in downloads:
+                if down.is_complete == True:
+                    for s in state.keys():
+                        # Ensure files have been populated before proceeding
+                        if bool(state[s]["files"]):
+                            for source in state[s]["files"].keys():
+                                # If the completed downloads's source matches this deal, change 'incomplete' to the file path
+                                if source == down.files[0].uris[0]["uri"]:
+                                    state[s]["files"][source] = str(down.files[0].path)
+                                    break
+                            if all([v != "incomplete" for v in state[s]["files"].values()]):
+                                state[s]["status"] = "downloaded"
+                                log.info(f"Download complete: {s}")
+                    # Cleanup download from Aria2c
+                    down.purge()
 
         log.debug(f"completed download state: {json.dumps(state, indent=4)}")
 
@@ -512,9 +648,9 @@ def main() -> None:
             outcome = []
             if state[s]["status"] == "downloaded":
                 for f in state[s]["files"].keys():
-                    outcome.append(
-                        boost_import(options=options, deal_uuid=state[s]["deal_uuid"], file_path=state[s]["files"][f])
-                    )
+                    out = boost_import(options=options, deal_uuid=state[s]["deal_uuid"], file_path=state[s]["files"][f])
+                    if out != None:
+                        outcome.append(out)
 
                 # If all files for this deal have been imported, delete the deal from local state
                 if all(outcome):
