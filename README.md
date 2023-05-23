@@ -4,6 +4,7 @@ _Ace of Spades_ ("Ace") is a project complimentary to Spade, a Fil+ dealmaking c
 
 _Ace of Spades_ has been built to be stateless. It accomplishes this by dynamically rebuilding its internal state based on the contents of the APIs it pulls and pushes data to (ie. Spade, Aria2c, and Boost). This makes Ace reasonably resilient to failures, allowing for unintentional restarts due to hardware or software failure, or intentional shutdowns such as for maintenance and upgrades. When Spade is started up again, it will pick up from where it last left off. _Ace_ requires no database in order to function and the code is contained in a single Python file.
 
+_Ace of Spades_ requires a minimum of Boost v1.7.x to function.
 
 ## Installation and Requirements
 There are three components that _Ace_ relies upon to function: [Boost](https://boost.filecoin.io/), [Spade](https://github.com/ribasushi/spade), and [Aria2c](https://aria2.github.io/). From the perspective of the operator of _Ace_, Spade is a service provided to you, Boost is your dealmaking component for your SP that you run, and Aria2c is a new daemon component you will need to run in order to use _Ace_. All downloading of .CAR files has been offloaded to Aria2c since it is already a robust and performant download manager.
@@ -41,8 +42,8 @@ A token to talk to boost is also required, and can either be specified on the co
 
 All parameters to _Ace_ can be specified either via command line flag or environment variable. See `--help` for both CLI flag names and env var names.
 ```
-usage: ace_of_spades.py [-h] --miner-id MINER_ID --fil-spid-file-path FIL_SPID_FILE_PATH [--aria2c-url [ARIA2C_URL]] [--aria2c-connections-per-server [ARIA2C_CONNECTIONS_PER_SERVER]] [--aria2c-max-concurrent-downloads [ARIA2C_MAX_CONCURRENT_DOWNLOADS]] [--aria2c-download-path [ARIA2C_DOWNLOAD_PATH]]
-                        [--boost-api-info BOOST_API_INFO] --boost-graphql-port [BOOST_GRAPHQL_PORT] [--boost-delete-after-import [BOOST_DELETE_AFTER_IMPORT]] [--maximum-boost-deals-in-flight [MAXIMUM_BOOST_DEALS_IN_FLIGHT]] [--verbose [VERBOSE]] [--debug [DEBUG]] [--complete-existing-deals-only [COMPLETE_EXISTING_DEALS_ONLY]]
+usage: ace_of_spades.py [-h] --miner-id MINER_ID --fil-spid-file-path FIL_SPID_FILE_PATH [--aria2c-url [ARIA2C_URL]] [--aria2c-connections-per-server [ARIA2C_CONNECTIONS_PER_SERVER]] [--aria2c-max-concurrent-downloads [ARIA2C_MAX_CONCURRENT_DOWNLOADS]] [--aria2c-download-path [ARIA2C_DOWNLOAD_PATH]] [--boost-api-info BOOST_API_INFO] --boost-graphql-port
+                        [BOOST_GRAPHQL_PORT] [--boost-delete-after-import [BOOST_DELETE_AFTER_IMPORT]] [--spade-deal-timeout [SPADE_DEAL_TIMEOUT]] [--maximum-boost-deals-in-flight [MAXIMUM_BOOST_DEALS_IN_FLIGHT]] [--complete-existing-deals-only [COMPLETE_EXISTING_DEALS_ONLY]] [--verbose [VERBOSE]] [--debug [DEBUG]]
 
 options:
   -h, --help            show this help message and exit
@@ -63,12 +64,14 @@ options:
                         The port number where Boost's graphql is hosted (eg. 8080)
   --boost-delete-after-import [BOOST_DELETE_AFTER_IMPORT]
                         Whether or not to instruct Boost to delete the downloaded data after it is imported. Equivalent of 'boostd --delete-after-import'. Default: True
+  --spade-deal-timeout [SPADE_DEAL_TIMEOUT]
+                        The time to wait between a deal appearing in Boost and appearing in Spade before considering the deal failed (or not a Spade deal) and ignoring it. Stated in seconds, with no units. Default: 3600
   --maximum-boost-deals-in-flight [MAXIMUM_BOOST_DEALS_IN_FLIGHT]
                         The maximum number of deals in 'Awaiting Offline Data Import' state in Boost UI. Default: 10
-  --verbose [VERBOSE]   If enabled, logging will be greatly increased. Default: False
-  --debug [DEBUG]       If enabled, logging will be thorough, enabling debugging of deep issues. Default: False
   --complete-existing-deals-only [COMPLETE_EXISTING_DEALS_ONLY]
                         Setting this flag will prevent new deals from being requested but allow existing deals to complete. Useful for cleaning out the deals pipeline to debug, or otherwise. Default: False
+  --verbose [VERBOSE]   If enabled, logging will be greatly increased. Default: False
+  --debug [DEBUG]       If enabled, logging will be thorough, enabling debugging of deep issues. Default: False
 ```
 
 ### Support
