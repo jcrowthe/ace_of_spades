@@ -403,7 +403,7 @@ def download_error(e, i):
         downloads = e.get_downloads()
         for down in downloads:
             if down.gid == i:
-                log.info(f"Retrying download due to error: {down.error_message}")
+                log.info(f"Retrying download due to aria2 error: {down.error_message}")
                 response = e.retry_downloads([down], False)
                 log.debug(f"Retry status: {response}")
     except:
@@ -583,7 +583,6 @@ def main() -> None:
 
         proposals = pending_proposals(options=options)
         downloads = get_downloads()
-        log.debug(f"Proposals: {proposals}")
 
         # Handle Spade errors in creating deals
         log.debug(f"deals_in_error_state: {deals_in_error_state}")
