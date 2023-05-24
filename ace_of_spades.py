@@ -178,6 +178,7 @@ def eligible_pieces(*, options: dict) -> dict:
         url=ELIGIBLE_PIECES_ENDPOINT,
         method="get",
         parameters={"timeout": 30, "headers": headers, "allow_redirects": True},
+        log_name="eligible_pieces",
     )
     if response == None:
         return None
@@ -191,7 +192,10 @@ def invoke_deal(*, piece_cid: str, tenant_policy_cid: str, options: dict) -> dic
 
     headers = {"Authorization": auth_token}
     response = request_handler(
-        url=INVOKE_ENDPOINT, method="post", parameters={"timeout": 30, "headers": headers, "allow_redirects": True}
+        url=INVOKE_ENDPOINT,
+        method="post",
+        parameters={"timeout": 30, "headers": headers, "allow_redirects": True},
+        log_name="invoke_deal",
     )
 
     if response == None:
@@ -213,6 +217,7 @@ def pending_proposals(*, options: dict) -> list:
         url=PENDING_PROPOSALS_ENDPOINT,
         method="get",
         parameters={"timeout": 30, "headers": headers, "allow_redirects": True},
+        log_name="pending_proposals",
     )
     if response == None:
         return None
@@ -242,6 +247,7 @@ def boost_import(*, options: dict, deal_uuid: str, file_path: str) -> bool:
         url=f"http://{boost_url}:{boost_port}/rpc/v0",
         method="post",
         parameters={"timeout": 30, "data": json.dumps(payload), "headers": headers},
+        log_name="boost_import",
     )
     json_rpc_id += 1
     if response == None:
@@ -269,6 +275,7 @@ def get_boost_deals(*, options: dict) -> Any:
         url=f"http://{boost_url}:{options.boost_graphql_port}/graphql/query",
         method="post",
         parameters={"timeout": 30, "data": json.dumps(payload)},
+        log_name="get_boost_deals",
     )
     if response == None:
         return None
@@ -277,9 +284,9 @@ def get_boost_deals(*, options: dict) -> Any:
         return [d for d in deals if d["Message"] == "Awaiting Offline Data Import"]
 
 
-def request_handler(*, url: str, method: str, parameters: dict) -> bool:
+def request_handler(*, url: str, method: str, parameters: dict, log_name: str) -> bool:
     try:
-        return make_request(url=url, method=method, parameters=parameters)
+        return make_request(url=url, method=method, parameters=parameters, log_name=log_name)
     except tenacity.RetryError as e:
         log.error("Retries failed. Moving on.")
         return None
@@ -289,7 +296,7 @@ def request_handler(*, url: str, method: str, parameters: dict) -> bool:
     wait=tenacity.wait_exponential(min=1, max=6, multiplier=2),
     after=tenacity.after.after_log(log_retry, logging.INFO),
 )
-def make_request(*, url: str, method: str, parameters: dict) -> Any:
+def make_request(*, url: str, method: str, parameters: dict, log_name: str) -> Any:
     try:
         if method == "post":
             response = requests.post(url, **parameters)
@@ -299,18 +306,18 @@ def make_request(*, url: str, method: str, parameters: dict) -> Any:
         res = response.json()
         # Disable logging of noisy responses
         if url != ELIGIBLE_PIECES_ENDPOINT:
-            log_request.debug(f"Response: {res}")
+            log_request.debug(f"{log_name}, Response: {res}")
     except requests.exceptions.HTTPError as e:
-        log_request.error(f"HTTPError: {e}")
+        log_request.error(f"{log_name}, HTTPError: {e}")
         raise Exception(f"HTTPError: {e}")
     except requests.exceptions.ConnectionError as e:
-        log_request.error(f"ConnectionError: {e}")
+        log_request.error(f"{log_name}, ConnectionError: {e}")
         raise Exception(f"ConnectionError: {e}")
     except (TimeoutError, urllib3.exceptions.ReadTimeoutError, requests.exceptions.ReadTimeout) as e:
-        log_request.error(f"Timeout: {e}")
+        log_request.error(f"{log_name}, Timeout: {e}")
         raise Exception(f"Timeout: {e}")
     except:
-        log_request.error(f"Timeout: {e}")
+        log_request.error(f"{log_name}, Timeout: {e}")
         raise Exception(f"Timeout: {e}")
 
     if response.status_code == 401:
@@ -320,13 +327,13 @@ def make_request(*, url: str, method: str, parameters: dict) -> Any:
             )
             raise Exception("Auth token is in the future.")
         else:
-            log_request.error(f"401 Unauthorized: {res}")
+            log_request.error(f"{log_name}, received 401 Unauthorized: {res}")
             raise Exception(f"401 Unauthorized: {res}")
     if response.status_code == 403:
         if "error_slug" in res and res["error_slug"] == "ErrTooManyReplicas":
             return response
         else:
-            log_request.error(f"403 Forbidden: {res}")
+            log_request.error(f"{log_name}, received 403 Forbidden: {res}")
             raise Exception(f"403 Forbidden: {res}")
 
     return res
@@ -427,6 +434,7 @@ def request_deal(*, options: dict) -> Any:
         return None
     if len(pieces["response"]) < 1:
         log.error("Error. No deal pieces returned.")
+        return None
 
     # Randomly select a deal from those returned
     deal_number = random.randint(0, len(pieces["response"]) - 1)
@@ -552,7 +560,6 @@ def main() -> None:
         # Identify when deals are submitted to Boost
         deals = get_boost_deals(options=options)
         if deals != None:
-            log.debug(f"Deals: {deals}")
             for d in deals:
                 if d["PieceCid"] not in deals_in_error_state:
                     if d["PieceCid"] not in state:
