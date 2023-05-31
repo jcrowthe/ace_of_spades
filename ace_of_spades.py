@@ -46,7 +46,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--aria2c-connections-per-server",
-        help="Configures the '-x' flag in aria2c. (eg. aria2c -x8 <uri>)",
+        help="Configures the '-x' flag in aria2c. (eg. aria2c -x8 <uri>). Default: 10",
         nargs="?",
         const=10,
         type=str,
@@ -55,7 +55,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--aria2c-max-concurrent-downloads",
-        help="Configures the '-j' flag in aria2c. (eg. aria2c -j10)",
+        help="Configures the '-j' flag in aria2c. (eg. aria2c -j10). Default: 10",
         nargs="?",
         const=10,
         type=str,
@@ -200,11 +200,6 @@ def invoke_deal(*, piece_cid: str, tenant_policy_cid: str, options: dict) -> dic
 
     if response == None:
         return None
-    if response["response_code"] == 403:
-        return {
-            "invocation_failure_slug": "ErrTooManyReplicas",
-            "invocation_failure_message": "".join(response["error_lines"]),
-        }
 
     response["piece_cid"] = re.findall(r"baga[a-zA-Z0-9]+", response["info_lines"][0])[0]
     log.debug(f"New deal requested: {response}")
@@ -328,13 +323,10 @@ def make_request(*, url: str, method: str, parameters: dict, log_name: str) -> A
             raise Exception("Auth token is in the future.")
         else:
             log_request.error(f"{log_name}, received 401 Unauthorized: {res}")
-            raise Exception(f"401 Unauthorized: {res}")
+            raise None
     if response.status_code == 403:
-        if "error_slug" in res and res["error_slug"] == "ErrTooManyReplicas":
-            return response
-        else:
-            log_request.error(f"{log_name}, received 403 Forbidden: {res}")
-            raise Exception(f"403 Forbidden: {res}")
+        log_request.error(f"{log_name}, received 403 Forbidden: {res}")
+        raise None
 
     return res
 
@@ -540,20 +532,15 @@ def main() -> None:
                 for i in range(len(state), options.maximum_boost_deals_in_flight):
                     new_deal = request_deal(options=options)
                     if new_deal != None:
-                        if "invocation_failure_slug" in new_deal:
-                            log.warning(
-                                f'Invoke failed due to Spade error. Slug: {new_deal["invocation_failure_slug"]}. Error: {new_deal["invocation_failure_message"]}'
-                            )
-                        else:
-                            if new_deal["piece_cid"] not in deals_in_error_state:
-                                log.debug(f'adding {new_deal["piece_cid"]} to state')
-                                state[new_deal["piece_cid"]] = {
-                                    "deal_uuid": "unknown",
-                                    "files": {},
-                                    "timestamp_in_boost": time.time(),
-                                    "status": "invoked",
-                                }
-                                log.info(f'New deal found in Boost: {new_deal["piece_cid"]}')
+                        if new_deal["piece_cid"] not in deals_in_error_state:
+                            log.debug(f'adding {new_deal["piece_cid"]} to state')
+                            state[new_deal["piece_cid"]] = {
+                                "deal_uuid": "unknown",
+                                "files": {},
+                                "timestamp_in_boost": time.time(),
+                                "status": "invoked",
+                            }
+                            log.info(f'New deal found in Boost: {new_deal["piece_cid"]}')
 
         log.debug(f"request state: {json.dumps(state, indent=4)}")
 
