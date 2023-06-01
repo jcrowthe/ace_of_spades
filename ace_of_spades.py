@@ -342,10 +342,10 @@ def make_request(*, url: str, method: str, parameters: dict, log_name: str, mine
             raise Exception("Auth token is in the future.")
         else:
             log_request.error(f"{log_name}, received 401 Unauthorized: {res}")
-            raise None
+            return None
     if response.status_code == 403:
         log_request.error(f"{log_name}, received 403 Forbidden: {res}")
-        raise None
+        return None
 
     return res
 
