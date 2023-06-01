@@ -173,12 +173,12 @@ PENDING_PROPOSALS_ENDPOINT = "https://api.spade.storage/sp/pending_proposals"
 
 def eligible_pieces(*, options: dict) -> dict:
     log.debug("Querying for eligible pieces")
-    headers = {"Authorization": shell(command=["bash", options.fil_spid_file_path, options.miner_id])}
     response = request_handler(
         url=ELIGIBLE_PIECES_ENDPOINT,
         method="get",
-        parameters={"timeout": 30, "headers": headers, "allow_redirects": True},
+        parameters={"timeout": 30, "allow_redirects": True},
         log_name="eligible_pieces",
+        miner_auth_header={"add": True},
     )
     if response == None:
         return None
@@ -187,15 +187,15 @@ def eligible_pieces(*, options: dict) -> dict:
 
 def invoke_deal(*, piece_cid: str, tenant_policy_cid: str, options: dict) -> dict:
     log.debug("Invoking a new deal")
-    stdin = f"call=reserve_piece&piece_cid={piece_cid}&tenant_policy={tenant_policy_cid}"
-    auth_token = shell(command=["bash", options.fil_spid_file_path, options.miner_id], stdin=stdin)
-
-    headers = {"Authorization": auth_token}
     response = request_handler(
         url=INVOKE_ENDPOINT,
         method="post",
-        parameters={"timeout": 30, "headers": headers, "allow_redirects": True},
+        parameters={"timeout": 30, "allow_redirects": True},
         log_name="invoke_deal",
+        miner_auth_header={
+            "add": True,
+            "stdin": f"call=reserve_piece&piece_cid={piece_cid}&tenant_policy={tenant_policy_cid}",
+        },
     )
 
     if response == None:
@@ -207,12 +207,13 @@ def invoke_deal(*, piece_cid: str, tenant_policy_cid: str, options: dict) -> dic
 
 
 def pending_proposals(*, options: dict) -> list:
-    headers = {"Authorization": shell(command=["bash", options.fil_spid_file_path, options.miner_id])}
+    log.debug("Querying pending proposals")
     response = request_handler(
         url=PENDING_PROPOSALS_ENDPOINT,
         method="get",
-        parameters={"timeout": 30, "headers": headers, "allow_redirects": True},
+        parameters={"timeout": 30, "allow_redirects": True},
         log_name="pending_proposals",
+        miner_auth_header={"add": True},
     )
     if response == None:
         return None
@@ -243,6 +244,7 @@ def boost_import(*, options: dict, deal_uuid: str, file_path: str) -> bool:
         method="post",
         parameters={"timeout": 30, "data": json.dumps(payload), "headers": headers},
         log_name="boost_import",
+        miner_auth_header={"add": False},
     )
     json_rpc_id += 1
     if response == None:
@@ -271,6 +273,7 @@ def get_boost_deals(*, options: dict) -> Any:
         method="post",
         parameters={"timeout": 30, "data": json.dumps(payload)},
         log_name="get_boost_deals",
+        miner_auth_header={"add": False},
     )
     if response == None:
         return None
@@ -279,9 +282,11 @@ def get_boost_deals(*, options: dict) -> Any:
         return [d for d in deals if d["Message"] == "Awaiting Offline Data Import"]
 
 
-def request_handler(*, url: str, method: str, parameters: dict, log_name: str) -> bool:
+def request_handler(*, url: str, method: str, parameters: dict, log_name: str, miner_auth_header: dict) -> bool:
     try:
-        return make_request(url=url, method=method, parameters=parameters, log_name=log_name)
+        return make_request(
+            url=url, method=method, parameters=parameters, log_name=log_name, miner_auth_header=miner_auth_header
+        )
     except tenacity.RetryError as e:
         log.error("Retries failed. Moving on.")
         return None
@@ -291,14 +296,28 @@ def request_handler(*, url: str, method: str, parameters: dict, log_name: str) -
     wait=tenacity.wait_exponential(min=1, max=6, multiplier=2),
     after=tenacity.after.after_log(log_retry, logging.INFO),
 )
-def make_request(*, url: str, method: str, parameters: dict, log_name: str) -> Any:
+def make_request(*, url: str, method: str, parameters: dict, log_name: str, miner_auth_header: dict) -> Any:
     try:
+        if miner_auth_header["add"]:
+            if "stdin" in miner_auth_header:
+                auth_token = shell(
+                    command=["bash", options.fil_spid_file_path, options.miner_id], stdin=miner_auth_header["stdin"]
+                )
+            else:
+                auth_token = shell(command=["bash", options.fil_spid_file_path, options.miner_id])
+
+            if "headers" not in parameters:
+                parameters["headers"] = {"Authorization": auth_token}
+            else:
+                parameters["headers"]["Authorization"] = auth_token
+
         if method == "post":
             response = requests.post(url, **parameters)
         if method == "get":
             response = requests.get(url, **parameters)
 
         res = response.json()
+
         # Disable logging of noisy responses
         if url != ELIGIBLE_PIECES_ENDPOINT:
             log_request.debug(f"{log_name}, Response: {res}")
