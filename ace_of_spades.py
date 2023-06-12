@@ -73,7 +73,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--boost-api-info",
-        help="The Boost api string normally set as the BOOST_API_INFO environment variable (eg. 'eyJhbG...aCG:/ip4/192.168.10.10/tcp/3051/http')",
+        help="The Boost api string normally set as the BOOST_API_INFO environment variable (eg. 'eyJhbG...aCG:/ip4/10.0.0.10/tcp/1234/http')",
         type=str,
         default=os.environ.get("BOOST_API_INFO"),
         required=not os.environ.get("BOOST_API_INFO"),
@@ -112,6 +112,15 @@ def parse_args() -> argparse.Namespace:
         const=10,
         type=int,
         default=os.environ.get("MAXIMUM_BOOST_DEALS_IN_FLIGHT", 10),
+        required=False,
+    )
+    parser.add_argument(
+        "--maximum-snap-sectors-in-flight",
+        help="The maximum number of UpdateReplica and ProveReplicaUpdate tasks being processed by the miner. If above this limit, new Spade deals will not be requested until count is below this number again. Default: 0 (meaning no limit)",
+        nargs="?",
+        const=0,
+        type=int,
+        default=os.environ.get("MAXIMUM_SNAP_SECTORS_IN_FLIGHT", 0),
         required=False,
     )
     parser.add_argument(
@@ -163,7 +172,6 @@ aria2 = None
 log = get_logger("Ace", options=options)
 log_retry = get_logger("RETRYING", options=options)
 log_aria2 = get_logger("Aria2", options=options)
-log_boost = get_logger("Boost", options=options)
 log_request = get_logger("Request", options=options)
 
 ELIGIBLE_PIECES_ENDPOINT = "https://api.spade.storage/sp/eligible_pieces"
@@ -280,6 +288,32 @@ def get_boost_deals(*, options: dict) -> Any:
     else:
         deals = response["data"]["deals"]["deals"]
         return [d for d in deals if d["Message"] == "Awaiting Offline Data Import"]
+
+
+def get_snap_sectors_count(*, options: dict) -> int:
+    log.debug("Querying sector statuses from boost")
+    boost_url = options.boost_api_info.split(":")[1].split("/")[2]
+    payload = {
+        "query": "query {sealingpipeline { SectorStates { SnapDeals { Key, Value}}}}"
+    }
+
+    response = request_handler(
+        url=f"http://{boost_url}:{options.boost_graphql_port}/graphql/query",
+        method="post",
+        parameters={"timeout": 30, "data": json.dumps(payload)},
+        log_name="get_snap_sectors_count",
+        miner_auth_header={"add": False},
+    )
+    if response == None:
+        return -1
+    else:
+        count = 0
+        states = response.get("data", {}).get("sealingpipeline", {}).get("SectorStates", {}).get("SnapDeals", [])
+        for i in states:
+            if i['Key'] in ['UpdateReplica', 'ProveReplicaUpdate']:
+                count += i['Value']
+        log.debug(f"Found {count} sectors in RU/PRU states.")
+        return count
 
 
 def request_handler(*, url: str, method: str, parameters: dict, log_name: str, miner_auth_header: dict) -> bool:
@@ -519,6 +553,10 @@ def startup_checks(*, options: dict) -> None:
 
 def main() -> None:
     global options
+
+    log.info('--== Ace of Spades ==--')
+    log.info('Parameters: \n    ' + '\n    '.join(f'{k}={v}' for k, v in vars(options).items() if k != 'boost_api_info'))
+
     startup_checks(options=options)
     log.info("Connecting to Aria2c...")
     setup_aria2p(options=options)
@@ -548,18 +586,25 @@ def main() -> None:
         # Request deals from Spade
         if not options.complete_existing_deals_only:
             if len(state) < options.maximum_boost_deals_in_flight:
-                for i in range(len(state), options.maximum_boost_deals_in_flight):
-                    new_deal = request_deal(options=options)
-                    if new_deal != None:
-                        if new_deal["piece_cid"] not in deals_in_error_state:
-                            log.debug(f'adding {new_deal["piece_cid"]} to state')
-                            state[new_deal["piece_cid"]] = {
-                                "deal_uuid": "unknown",
-                                "files": {},
-                                "timestamp_in_boost": time.time(),
-                                "status": "invoked",
-                            }
-                            log.info(f'New deal found in Boost: {new_deal["piece_cid"]}')
+                if options.maximum_snap_sectors_in_flight == 0 or options.maximum_snap_sectors_in_flight > get_snap_sectors_count(options=options):
+                    for i in range(len(state), options.maximum_boost_deals_in_flight):
+                        new_deal = request_deal(options=options)
+                        if new_deal != None:
+                            if new_deal["piece_cid"] not in deals_in_error_state:
+                                log.debug(f'adding {new_deal["piece_cid"]} to state')
+                                state[new_deal["piece_cid"]] = {
+                                    "deal_uuid": "unknown",
+                                    "files": {},
+                                    "timestamp_in_boost": time.time(),
+                                    "status": "invoked",
+                                }
+                                log.info(f'New deal found in Boost: {new_deal["piece_cid"]}')
+                else:
+                    log.debug(f'Snap sector count is greater than desired quantity ({options.maximum_snap_sectors_in_flight}). Not requesting a new deal.')
+                    if len(state) == 0:
+                        log.debug(f'No work for Ace to monitor. Sleeping for 2 minutes...')
+                        time.sleep(120)
+
 
         log.debug(f"request state: {json.dumps(state, indent=4)}")
 
