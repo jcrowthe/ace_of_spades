@@ -42,8 +42,9 @@ A token to talk to boost is also required, and can either be specified on the co
 
 All parameters to _Ace_ can be specified either via command line flag or environment variable. See `--help` for both CLI flag names and env var names.
 ```
-usage: ace_of_spades.py [-h] --miner-id MINER_ID --fil-spid-file-path FIL_SPID_FILE_PATH [--aria2c-url [ARIA2C_URL]] [--aria2c-connections-per-server [ARIA2C_CONNECTIONS_PER_SERVER]] [--aria2c-max-concurrent-downloads [ARIA2C_MAX_CONCURRENT_DOWNLOADS]] [--aria2c-download-path [ARIA2C_DOWNLOAD_PATH]] [--boost-api-info BOOST_API_INFO] --boost-graphql-port
-                        [BOOST_GRAPHQL_PORT] [--boost-delete-after-import [BOOST_DELETE_AFTER_IMPORT]] [--spade-deal-timeout [SPADE_DEAL_TIMEOUT]] [--maximum-boost-deals-in-flight [MAXIMUM_BOOST_DEALS_IN_FLIGHT]] [--complete-existing-deals-only [COMPLETE_EXISTING_DEALS_ONLY]] [--verbose [VERBOSE]] [--debug [DEBUG]]
+usage: ace_of_spades.py [-h] [--miner-id MINER_ID] [--fil-spid-file-path FIL_SPID_FILE_PATH] [--aria2c-url [ARIA2C_URL]] [--aria2c-connections-per-server [ARIA2C_CONNECTIONS_PER_SERVER]] [--aria2c-max-concurrent-downloads [ARIA2C_MAX_CONCURRENT_DOWNLOADS]] [--aria2c-download-path [ARIA2C_DOWNLOAD_PATH]]
+                        [--boost-api-info BOOST_API_INFO] [--boost-graphql-port [BOOST_GRAPHQL_PORT]] [--boost-delete-after-import [BOOST_DELETE_AFTER_IMPORT]] [--spade-deal-timeout [SPADE_DEAL_TIMEOUT]] [--maximum-boost-deals-in-flight [MAXIMUM_BOOST_DEALS_IN_FLIGHT]]
+                        [--maximum-snap-sectors-in-flight [MAXIMUM_SNAP_SECTORS_IN_FLIGHT]] [--complete-existing-deals-only [COMPLETE_EXISTING_DEALS_ONLY]] [--verbose [VERBOSE]] [--debug [DEBUG]]
 
 options:
   -h, --help            show this help message and exit
@@ -53,13 +54,13 @@ options:
   --aria2c-url [ARIA2C_URL]
                         URL of the aria2c process running in daemon mode (eg. 'http://localhost:6800'). Launch the daemon with `aria2c --enable-rpc`.
   --aria2c-connections-per-server [ARIA2C_CONNECTIONS_PER_SERVER]
-                        Configures the '-x' flag in aria2c. (eg. aria2c -x8 <uri>)
+                        Configures the '-x' flag in aria2c. (eg. aria2c -x8 <uri>). Default: 10
   --aria2c-max-concurrent-downloads [ARIA2C_MAX_CONCURRENT_DOWNLOADS]
-                        Configures the '-j' flag in aria2c. (eg. aria2c -j10)
+                        Configures the '-j' flag in aria2c. (eg. aria2c -j10). Default: 10
   --aria2c-download-path [ARIA2C_DOWNLOAD_PATH]
                         The directory into which aria2c should be configured to download files before being imported to Boost. Default: /mnt/data
   --boost-api-info BOOST_API_INFO
-                        The Boost api string normally set as the BOOST_API_INFO environment variable (eg. 'eyJhbG...aCG:/ip4/192.168.10.10/tcp/3051/http')
+                        The Boost api string normally set as the BOOST_API_INFO environment variable (eg. 'eyJhbG...aCG:/ip4/10.0.0.10/tcp/1234/http')
   --boost-graphql-port [BOOST_GRAPHQL_PORT]
                         The port number where Boost's graphql is hosted (eg. 8080)
   --boost-delete-after-import [BOOST_DELETE_AFTER_IMPORT]
@@ -68,6 +69,8 @@ options:
                         The time to wait between a deal appearing in Boost and appearing in Spade before considering the deal failed (or not a Spade deal) and ignoring it. Stated in seconds, with no units. Default: 3600
   --maximum-boost-deals-in-flight [MAXIMUM_BOOST_DEALS_IN_FLIGHT]
                         The maximum number of deals in 'Awaiting Offline Data Import' state in Boost UI. Default: 10
+  --maximum-snap-sectors-in-flight [MAXIMUM_SNAP_SECTORS_IN_FLIGHT]
+                        The maximum number of UpdateReplica and ProveReplicaUpdate tasks being processed by the miner. If above this limit, new Spade deals will not be requested until count is below this number again. Default: 0 (meaning no limit)
   --complete-existing-deals-only [COMPLETE_EXISTING_DEALS_ONLY]
                         Setting this flag will prevent new deals from being requested but allow existing deals to complete. Useful for cleaning out the deals pipeline to debug, or otherwise. Default: False
   --verbose [VERBOSE]   If enabled, logging will be greatly increased. Default: False
