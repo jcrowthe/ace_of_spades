@@ -124,6 +124,15 @@ def parse_args() -> argparse.Namespace:
         required=False,
     )
     parser.add_argument(
+        "--maximum-sectors-in-adding-piece-state",
+        help="The maximum number of 'Adding to Sector' tasks being processed by the miner. If above this limit, new Spade deals will not be requested until count is below this number again. Default: 0 (meaning no limit)",
+        nargs="?",
+        const=0,
+        type=int,
+        default=os.environ.get("MAXIMUM_SECTORS_IN_ADDING_PIECE_STATE", 0),
+        required=False,
+    )
+    parser.add_argument(
         "--complete-existing-deals-only",
         help="Setting this flag will prevent new deals from being requested but allow existing deals to complete. Useful for cleaning out the deals pipeline to debug, or otherwise. Default: False",
         nargs="?",
@@ -308,11 +317,43 @@ def get_snap_sectors_count(*, options: dict) -> int:
         return -1
     else:
         count = 0
-        states = response.get("data", {}).get("sealingpipeline", {}).get("SectorStates", {}).get("SnapDeals", [])
-        for i in states:
+        states = response.get("data", {})
+        if states == None:
+            log.error(f"Boost API returned an unexpected result. Nonetype instead of an object. Ignoring")
+            return options.maximum_snap_sectors_in_flight
+
+        snapdeals = states.get("sealingpipeline", {}).get("SectorStates", {}).get("SnapDeals", [])
+        for i in snapdeals:
             if i['Key'] in ['UpdateReplica', 'ProveReplicaUpdate']:
                 count += i['Value']
         log.debug(f"Found {count} sectors in RU/PRU states.")
+        return count
+
+
+def get_adding_to_sector_count(*, options: dict) -> int:
+    log.debug("Querying count of deals in 'Adding to Sector' state")
+    boost_url = options.boost_api_info.split(":")[1].split("/")[2]
+    payload = {
+        "query": "query {deals(limit: 1000, filter: {IsOffline: true, Checkpoint: PublishConfirmed}) {totalCount}}"
+    }
+
+    response = request_handler(
+        url=f"http://{boost_url}:{options.boost_graphql_port}/graphql/query",
+        method="post",
+        parameters={"timeout": 30, "data": json.dumps(payload)},
+        log_name="get_adding_to_sector_count",
+        miner_auth_header={"add": False},
+    )
+    if response == None:
+        return -1
+    else:
+        states = response.get("data", {})
+        if states == None:
+            log.error(f"Boost API returned an unexpected result. Nonetype instead of an object. Ignoring")
+            return options.maximum_sectors_in_adding_piece_state
+
+        count = states.get("deals", {}).get("totalCount", options.maximum_sectors_in_adding_piece_state)
+        log.debug(f"Found {count} sectors in 'Adding to Sector' state.")
         return count
 
 
@@ -587,18 +628,24 @@ def main() -> None:
         if not options.complete_existing_deals_only:
             if len(state) < options.maximum_boost_deals_in_flight:
                 if options.maximum_snap_sectors_in_flight == 0 or options.maximum_snap_sectors_in_flight > get_snap_sectors_count(options=options):
-                    for i in range(len(state), options.maximum_boost_deals_in_flight):
-                        new_deal = request_deal(options=options)
-                        if new_deal != None:
-                            if new_deal["piece_cid"] not in deals_in_error_state:
-                                log.debug(f'adding {new_deal["piece_cid"]} to state')
-                                state[new_deal["piece_cid"]] = {
-                                    "deal_uuid": "unknown",
-                                    "files": {},
-                                    "timestamp_in_boost": time.time(),
-                                    "status": "invoked",
-                                }
-                                log.info(f'New deal found in Boost: {new_deal["piece_cid"]}')
+                    if options.maximum_sectors_in_adding_piece_state == 0 or options.maximum_sectors_in_adding_piece_state > get_adding_to_sector_count(options=options):
+                        for i in range(len(state), options.maximum_boost_deals_in_flight):
+                            new_deal = request_deal(options=options)
+                            if new_deal != None:
+                                if new_deal["piece_cid"] not in deals_in_error_state:
+                                    log.debug(f'adding {new_deal["piece_cid"]} to state')
+                                    state[new_deal["piece_cid"]] = {
+                                        "deal_uuid": "unknown",
+                                        "files": {},
+                                        "timestamp_in_boost": time.time(),
+                                        "status": "invoked",
+                                    }
+                                    log.info(f'New deal found in Boost: {new_deal["piece_cid"]}')
+                    else:
+                        log.debug(f'Too many sectors found in "Adding to Sector" state, as count is greater than desired quantity ({options.maximum_sectors_in_adding_piece_state}). Not requesting a new deal.')
+                        if len(state) == 0:
+                            log.debug(f'No work for Ace to monitor. Sleeping for 2 minutes...')
+                            time.sleep(120)
                 else:
                     log.debug(f'Snap sector count is greater than desired quantity ({options.maximum_snap_sectors_in_flight}). Not requesting a new deal.')
                     if len(state) == 0:
