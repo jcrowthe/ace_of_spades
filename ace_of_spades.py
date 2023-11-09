@@ -115,12 +115,12 @@ def parse_args() -> argparse.Namespace:
         required=False,
     )
     parser.add_argument(
-        "--maximum-snap-sectors-in-flight",
-        help="The maximum number of UpdateReplica and ProveReplicaUpdate tasks being processed by the miner. If above this limit, new Spade deals will not be requested until count is below this number again. Default: 0 (meaning no limit)",
+        "--maximum-sectors-in-sealing-pipeline",
+        help="The maximum number of sectors being processed by the miner (of either Snap deals or Regular deal types). Since PC1 is typically the gating factor for sealing pipelines, this flag only takes into account how many sectors are in PC1 state. If above this limit, new Spade deals will not be requested until count is below this number again. Default: 0 (meaning no limit)",
         nargs="?",
         const=0,
         type=int,
-        default=os.environ.get("MAXIMUM_SNAP_SECTORS_IN_FLIGHT", 0),
+        default=os.environ.get("MAXIMUM_SECTORS_IN_SEALING_PIPELINE", os.environ.get("MAXIMUM_SNAP_SECTORS_IN_FLIGHT", 0)),
         required=False,
     )
     parser.add_argument(
@@ -299,18 +299,18 @@ def get_boost_deals(*, options: dict) -> Any:
         return [d for d in deals if d["Message"] == "Awaiting Offline Data Import"]
 
 
-def get_snap_sectors_count(*, options: dict) -> int:
+def get_deal_sectors_count(*, options: dict) -> int:
     log.debug("Querying sector statuses from boost")
     boost_url = options.boost_api_info.split(":")[1].split("/")[2]
     payload = {
-        "query": "query {sealingpipeline { SectorStates { SnapDeals { Key, Value}}}}"
+        "query": "query {sealingpipeline { SectorStates { SnapDeals { Key, Value} Regular { Key, Value}}}}"
     }
 
     response = request_handler(
         url=f"http://{boost_url}:{options.boost_graphql_port}/graphql/query",
         method="post",
         parameters={"timeout": 30, "data": json.dumps(payload)},
-        log_name="get_snap_sectors_count",
+        log_name="get_deal_sectors_count",
         miner_auth_header={"add": False},
     )
     if response == None:
@@ -320,13 +320,18 @@ def get_snap_sectors_count(*, options: dict) -> int:
         states = response.get("data", {})
         if states == None:
             log.error(f"Boost API returned an unexpected result. Nonetype instead of an object. Ignoring")
-            return options.maximum_snap_sectors_in_flight
+            return options.maximum_sectors_in_sealing_pipeline
 
         snapdeals = states.get("sealingpipeline", {}).get("SectorStates", {}).get("SnapDeals", [])
         for i in snapdeals:
             if i['Key'] in ['UpdateReplica', 'ProveReplicaUpdate']:
                 count += i['Value']
-        log.debug(f"Found {count} sectors in RU/PRU states.")
+
+        regular = states.get("sealingpipeline", {}).get("SectorStates", {}).get("Regular", [])
+        for i in regular:
+            if i['Key'] in ['PreCommit1']:
+                count += i['Value']
+        log.debug(f"Found {count} sectors in sealing pipeline.")
         return count
 
 
@@ -627,7 +632,7 @@ def main() -> None:
         # Request deals from Spade
         if not options.complete_existing_deals_only:
             if len(state) < options.maximum_boost_deals_in_flight:
-                if options.maximum_snap_sectors_in_flight == 0 or options.maximum_snap_sectors_in_flight > get_snap_sectors_count(options=options):
+                if options.maximum_sectors_in_sealing_pipeline == 0 or options.maximum_sectors_in_sealing_pipeline > get_deal_sectors_count(options=options):
                     if options.maximum_sectors_in_adding_piece_state == 0 or options.maximum_sectors_in_adding_piece_state > get_adding_to_sector_count(options=options):
                         for i in range(len(state), options.maximum_boost_deals_in_flight):
                             new_deal = request_deal(options=options)
@@ -647,7 +652,7 @@ def main() -> None:
                             log.debug(f'No work for Ace to monitor. Sleeping for 2 minutes...')
                             time.sleep(120)
                 else:
-                    log.debug(f'Snap sector count is greater than desired quantity ({options.maximum_snap_sectors_in_flight}). Not requesting a new deal.')
+                    log.debug(f'Sealing pipeline sector count is greater than desired quantity ({options.maximum_sectors_in_sealing_pipeline}). Not requesting a new deal.')
                     if len(state) == 0:
                         log.debug(f'No work for Ace to monitor. Sleeping for 2 minutes...')
                         time.sleep(120)

@@ -42,11 +42,15 @@ A token to talk to boost is also required, and can either be specified on the co
 
 All parameters to _Ace_ can be specified either via command line flag or environment variable. See `--help` for both CLI flag names and env var names.
 ```
-usage: ace_of_spades.py [-h] [--miner-id MINER_ID] [--fil-spid-file-path FIL_SPID_FILE_PATH] [--aria2c-url [ARIA2C_URL]] [--aria2c-connections-per-server [ARIA2C_CONNECTIONS_PER_SERVER]] [--aria2c-max-concurrent-downloads [ARIA2C_MAX_CONCURRENT_DOWNLOADS]] [--aria2c-download-path [ARIA2C_DOWNLOAD_PATH]]
-                        [--boost-api-info BOOST_API_INFO] [--boost-graphql-port [BOOST_GRAPHQL_PORT]] [--boost-delete-after-import [BOOST_DELETE_AFTER_IMPORT]] [--spade-deal-timeout [SPADE_DEAL_TIMEOUT]] [--maximum-boost-deals-in-flight [MAXIMUM_BOOST_DEALS_IN_FLIGHT]]
-                        [--maximum-snap-sectors-in-flight [MAXIMUM_SNAP_SECTORS_IN_FLIGHT]] [--complete-existing-deals-only [COMPLETE_EXISTING_DEALS_ONLY]] [--verbose [VERBOSE]] [--debug [DEBUG]]
+usage: ace_of_spades.py [-h] --miner-id MINER_ID --fil-spid-file-path FIL_SPID_FILE_PATH [--aria2c-url [ARIA2C_URL]]
+                        [--aria2c-connections-per-server [ARIA2C_CONNECTIONS_PER_SERVER]] [--aria2c-max-concurrent-downloads [ARIA2C_MAX_CONCURRENT_DOWNLOADS]]
+                        [--aria2c-download-path [ARIA2C_DOWNLOAD_PATH]] --boost-api-info BOOST_API_INFO --boost-graphql-port [BOOST_GRAPHQL_PORT]
+                        [--boost-delete-after-import [BOOST_DELETE_AFTER_IMPORT]] [--spade-deal-timeout [SPADE_DEAL_TIMEOUT]]
+                        [--maximum-boost-deals-in-flight [MAXIMUM_BOOST_DEALS_IN_FLIGHT]] [--maximum-sectors-in-sealing-pipeline [MAXIMUM_SECTORS_IN_SEALING_PIPELINE]]
+                        [--maximum-sectors-in-adding-piece-state [MAXIMUM_SECTORS_IN_ADDING_PIECE_STATE]] [--complete-existing-deals-only [COMPLETE_EXISTING_DEALS_ONLY]]
+                        [--verbose [VERBOSE]] [--debug [DEBUG]]
 
-options:
+optional arguments:
   -h, --help            show this help message and exit
   --miner-id MINER_ID   Storage Provider miner ID (ie. f0123456)
   --fil-spid-file-path FIL_SPID_FILE_PATH
@@ -66,13 +70,20 @@ options:
   --boost-delete-after-import [BOOST_DELETE_AFTER_IMPORT]
                         Whether or not to instruct Boost to delete the downloaded data after it is imported. Equivalent of 'boostd --delete-after-import'. Default: True
   --spade-deal-timeout [SPADE_DEAL_TIMEOUT]
-                        The time to wait between a deal appearing in Boost and appearing in Spade before considering the deal failed (or not a Spade deal) and ignoring it. Stated in seconds, with no units. Default: 3600
+                        The time to wait between a deal appearing in Boost and appearing in Spade before considering the deal failed (or not a Spade deal) and ignoring it. Stated
+                        in seconds, with no units. Default: 3600
   --maximum-boost-deals-in-flight [MAXIMUM_BOOST_DEALS_IN_FLIGHT]
                         The maximum number of deals in 'Awaiting Offline Data Import' state in Boost UI. Default: 10
-  --maximum-snap-sectors-in-flight [MAXIMUM_SNAP_SECTORS_IN_FLIGHT]
-                        The maximum number of UpdateReplica and ProveReplicaUpdate tasks being processed by the miner. If above this limit, new Spade deals will not be requested until count is below this number again. Default: 0 (meaning no limit)
+  --maximum-sectors-in-sealing-pipeline [MAXIMUM_SECTORS_IN_SEALING_PIPELINE]
+                        The maximum number of sectors being processed by the miner (of either Snap deals or Regular deal types). Since PC1 is typically the gating factor for
+                        sealing pipelines, this flag only takes into account how many sectors are in PC1 state. If above this limit, new Spade deals will not be requested until
+                        count is below this number again. Default: 0 (meaning no limit)
+  --maximum-sectors-in-adding-piece-state [MAXIMUM_SECTORS_IN_ADDING_PIECE_STATE]
+                        The maximum number of 'Adding to Sector' tasks being processed by the miner. If above this limit, new Spade deals will not be requested until count is
+                        below this number again. Default: 0 (meaning no limit)
   --complete-existing-deals-only [COMPLETE_EXISTING_DEALS_ONLY]
-                        Setting this flag will prevent new deals from being requested but allow existing deals to complete. Useful for cleaning out the deals pipeline to debug, or otherwise. Default: False
+                        Setting this flag will prevent new deals from being requested but allow existing deals to complete. Useful for cleaning out the deals pipeline to debug,
+                        or otherwise. Default: False
   --verbose [VERBOSE]   If enabled, logging will be greatly increased. Default: False
   --debug [DEBUG]       If enabled, logging will be thorough, enabling debugging of deep issues. Default: False
 ```
@@ -94,3 +105,4 @@ To enforce code style, a Makefile with `black` has been provided. Please run `ma
 ### Donate
 
 Like what you see? Buy me lunch! Send donations to `f1ykyg3jzptvjbvf4leuy6ya3xdssrc7khpp6b6gq` and say hello to me at `@Jacob Crowther` on Filecoin slack.
+
